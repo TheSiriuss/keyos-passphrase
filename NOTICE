@@ -1,0 +1,32 @@
+Passphrase for Passport Prime
+Copyright (C) 2026 Nikita Miroshnichenko
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General
+Public License as published by the Free Software Foundation, either version 3 of the License, or (at your
+option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the full text in
+the file LICENSE.
+
+Third-party material
+--------------------
+
+1. EFF Large Wordlist for Passphrases (src/eff_large_wordlist.txt), embedded unchanged.
+   (c) Electronic Frontier Foundation, https://www.eff.org/dice
+   License: Creative Commons Attribution 3.0 United States, https://creativecommons.org/licenses/by/3.0/us/
+
+2. Montserrat Medium (the glyph masks in src/glyphs.rs are rasterised from it by tools/gen-glyphs).
+   Copyright 2011 The Montserrat Project Authors (julieta.ulanovsky@gmail.com)
+   License: SIL Open Font License 1.1, see LICENSES/OFL-1.1.txt. The masks are used only for the blocky
+   frames of the "pixel-in" effect; the text shown to the user is drawn by Slint with the system font.
+
+3. Scaffolding from the Foundation SDK (Foundation Devices, Inc.): app-config.toml, build.rs, Cargo.toml,
+   permission_templates.toml, src/theme.rs, AGENTS.md, .mcp.json and the skills under .claude/ and .agents/.
+   They keep their original licence headers (MIT) and are used here under those terms.
+
+4. Linked at build time, not part of this repository: the Foundation SDK (KeyOS platform crates and UI
+   components, MIT / Apache-2.0 and per-file licences) and Slint (Foundation's v1.17 fork), which is
+   available under GPL-3.0-only, a royalty-free licence or a commercial licence (see lib/slint/LICENSE.md
+   in the SDK). This program is released under the GPL-3.0-or-later so that it stays compatible with the
+   GPL option, and so that nobody can take it into a closed-source product.
+
+This program is not affiliated with or endorsed by Foundation Devices, Inc.

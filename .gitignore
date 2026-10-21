@@ -1,0 +1,7 @@
+target/
+.foundation-sdk/
+ui/ui
+manifest.toml
+/demo/raw.mkv
+/tools/*/target/
+/tools/*/Cargo.lock

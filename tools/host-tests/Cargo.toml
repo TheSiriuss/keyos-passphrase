@@ -1,0 +1,13 @@
+[package]
+name = "host-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The app's logic does not depend on KeyOS, so its tests run in a plain crate on the host:
+#   cargo test
+[dependencies]
+getrandom = "0.2"
+
+# its own workspace: the app crate two levels up must not adopt this
+[workspace]

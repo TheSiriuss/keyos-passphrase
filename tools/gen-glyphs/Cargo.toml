@@ -1,0 +1,11 @@
+[package]
+name = "gen-glyphs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+fontdue = { version = "0.9", default-features = false }
+
+# its own workspace: the app crate one level up must not adopt this
+[workspace]

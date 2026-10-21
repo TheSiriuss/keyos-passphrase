@@ -1,0 +1,512 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import {
+    Theme,
+    UISize,
+    Images,
+    ControlSize,
+    ButtonVariant,
+} from "@ui/theme.slint";
+import { PassphraseState, Word } from "callbacks.slint";
+import { Button } from "@ui/button.slint";
+import { SegmentedControl } from "@ui/segmented_control.slint";
+import { Switch } from "@ui/switch.slint";
+
+export { PassphraseState, Word, Theme, Images, ControlSize }
+
+// Colours that follow the system theme. Everything is drawn with vector shapes, no images: a raster asset
+// is stored as raw pixels on the device and would cost megabytes. Nothing here is a gradient either; the
+// software renderer fills flat colour cheaply and gradients at many times the cost per pixel.
+global Look {
+    out property <color> teal: Theme.palette-primary;
+    out property <color> copper: Theme.is-dark ? #d39468 : #b46f45;
+    out property <color> edge: Theme.is-dark ? #ffffff1a : #0000001a;
+    out property <color> card: Theme.is-dark ? #2b2728e6 : #f4f2f2e6;
+}
+
+// How long the screen may sit untouched with a passphrase on it. A touch is a tap on any control.
+global Policy {
+    // seconds until the words are covered (and Rust stops giving the UI a copy of them)
+    out property <int> hide-after: 30;
+    // seconds until everything is wiped
+    out property <int> wipe-after: 120;
+}
+
+// The page behind the content: the background colour in eight flat bands, a little darker towards the
+// bottom. Painted once; nothing here ever moves.
+component Backdrop inherits Rectangle {
+    for band in 8: Rectangle {
+        y: band * 100px;
+        height: 101px;
+        background: Theme.palette-background.mix(Theme.is-dark ? #000000 : #ffffff, band * 0.03);
+    }
+}
+
+// One numbered word. A new word is shown as coarse blocks that get finer step by step until the real text
+// takes over (the "pixel-in"), and leaves the same way backwards. Rows start one after the other.
+component WordRow inherits Rectangle {
+    in property <int> number;
+    in property <string> text;
+    in property <[image]> frames;
+    in property <bool> revealed;
+    in property <bool> leaving;
+    in property <length> row-height: 34px;
+
+    height: root.row-height;
+
+    // Where the effect has got to. Below 0 the row is still waiting for its turn, 0 to last-1 show the
+    // blocky frames, and `last` is the real text.
+    property <int> last: root.frames.length;
+    property <int> stage: 1 - root.number;
+    property <bool> busy: root.leaving ? root.stage >= 0 : root.stage < root.last;
+    property <image> blank;
+
+    // "Show words": 1 = the word, 0 = dots, cross-faded
+    property <float> reveal: root.revealed ? 1.0 : 0.0;
+    animate reveal {
+        duration: 180ms;
+        easing: ease-in-out;
+    }
+
+    // Steps, not an animation: between the steps the app sleeps, instead of redrawing at the full frame rate.
+    Timer {
+        interval: root.leaving ? 45ms : 75ms;
+        running: root.busy;
+        triggered => {
+            root.stage += root.leaving ? -1 : 1;
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.spacing-xl;
+        spacing: Theme.spacing-lg;
+        alignment: start;
+
+        Rectangle {
+            width: 28px;
+            height: 28px;
+            y: (root.row-height - 28px) / 2;
+            visible: root.stage >= 0;
+            border-radius: 14px;
+            border-width: 1.5px;
+            border-color: Look.copper;
+            background: Look.copper.with-alpha(0.12);
+
+            Text {
+                text: root.number;
+                color: Look.copper;
+                font-family: Theme.font-primary;
+                font-size: 14px;
+                font-weight: Theme.font-weight-semibold;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle {
+            width: 300px;
+
+            // the blocky frames: same place as the text, a margin of PIXEL-PAD around it
+            Image {
+                x: -4px;
+                y: (root.row-height - 30px) / 2 - 4px;
+                source: root.revealed && root.stage >= 0 && root.stage < root.last ? root.frames[root.stage] : root.blank;
+                width: self.source.width * 1px;
+                height: self.source.height * 1px;
+                colorize: Theme.palette-foreground;
+            }
+
+            // the real text, once the effect is done
+            Text {
+                x: 0px;
+                width: parent.width;
+                horizontal-alignment: left;
+                text: root.text;
+                color: Theme.palette-foreground.with-alpha(root.stage >= root.last ? root.reveal : 0.0);
+                font-family: Theme.font-primary;
+                font-size: Theme.font-size-lg;
+                font-weight: Theme.font-weight-semibold;
+                vertical-alignment: center;
+            }
+
+            Text {
+                x: 0px;
+                width: parent.width;
+                horizontal-alignment: left;
+                text: "••••••";
+                color: Theme.palette-muted.with-alpha(root.stage >= 0 ? 1.0 - root.reveal : 0.0);
+                font-family: Theme.font-primary;
+                font-size: Theme.font-size-lg;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// One die result slot: shows the digit rolled so far, or an empty box. It lights up when filled.
+component Slot inherits Rectangle {
+    in property <string> digit;
+
+    property <bool> filled: root.digit != "";
+
+    width: 48px;
+    height: 48px;
+    border-radius: 10px;
+    border-width: 1.5px;
+    border-color: root.filled ? Look.teal : Look.edge;
+    background: root.filled ? Look.teal.with-alpha(0.16) : #00000000;
+    animate border-color {
+        duration: 180ms;
+        easing: ease-out;
+    }
+    animate background {
+        duration: 180ms;
+        easing: ease-out;
+    }
+
+    Text {
+        text: root.digit;
+        color: Theme.palette-foreground.with-alpha(root.filled ? 1.0 : 0.0);
+        animate color {
+            duration: 160ms;
+            easing: ease-out;
+        }
+        font-family: Theme.font-primary;
+        font-size: Theme.font-size-title;
+        font-weight: Theme.font-weight-semibold;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Passphrase";
+    preferred-width: UISize.screen-width;
+    preferred-height: UISize.screen-height;
+    background: Theme.palette-background;
+
+    // the words are stepping out before they are replaced
+    property <bool> leaving: false;
+    // a timer is running that clears / regenerates once the old words are gone
+    // (timers are started by switching `running`; restart() does not start them on this platform)
+    property <bool> reset-pending: false;
+    property <bool> generate-pending: false;
+    property <bool> dice: PassphraseState.mode == 1;
+    // the word card is taller when there are no dice keys to make room for
+    property <length> card-height: root.dice ? 252px : 330px;
+    animate card-height {
+        duration: 300ms;
+        easing: ease-in-out;
+    }
+    property <length> card-y: 178px;
+    property <float> shown-bits: PassphraseState.bits;
+    animate shown-bits {
+        duration: 500ms;
+        easing: ease-out;
+    }
+
+    // seconds since the last touch; counted only while there is a passphrase on the screen
+    property <int> idle-seconds: 0;
+
+    function touched() {
+        root.idle-seconds = 0;
+    }
+
+    function replace-words() {
+        root.touched();
+        root.leaving = true;
+        root.reset-pending = true;
+    }
+
+    // Cover the words after Policy.hide-after seconds, wipe everything after Policy.wipe-after.
+    // It runs (once a second) only while there are words; the rest of the time the app sleeps.
+    idle-timer := Timer {
+        interval: 1s;
+        running: PassphraseState.words.length > 0;
+        triggered => {
+            root.idle-seconds += 1;
+            if root.idle-seconds == Policy.hide-after && PassphraseState.revealed {
+                PassphraseState.revealed = false;
+                PassphraseState.reveal-changed(false);
+            }
+            if root.idle-seconds >= Policy.wipe-after {
+                PassphraseState.restart();
+                PassphraseState.revealed = true;
+                PassphraseState.reveal-changed(true);
+                root.idle-seconds = 0;
+            }
+        }
+    }
+
+    // the old words step out first; this fires when they are gone (5 steps of 45 ms)
+    reset-timer := Timer {
+        interval: 280ms;
+        running: root.reset-pending;
+        triggered => {
+            root.reset-pending = false;
+            PassphraseState.restart();
+            root.leaving = false;
+        }
+    }
+
+    generate-timer := Timer {
+        interval: 280ms;
+        running: root.generate-pending;
+        triggered => {
+            root.generate-pending = false;
+            PassphraseState.generate();
+            root.leaving = false;
+        }
+    }
+
+    Backdrop {
+        width: parent.width;
+        height: parent.height;
+    }
+
+    SegmentedControl {
+        x: 24px;
+        y: 52px;
+        width: 432px;
+        height: 56px;
+        options: ["Device RNG", "My dice"];
+        selected-index <=> PassphraseState.mode;
+        changed(index, label) => {
+            root.replace-words();
+        }
+    }
+
+    SegmentedControl {
+        x: 24px;
+        y: 118px;
+        width: 432px;
+        height: 48px;
+        size: ControlSize.sm;
+        options: ["4 words", "5 words", "6 words", "8 words"];
+        selected-index <=> PassphraseState.count-index;
+        changed(index, label) => {
+            root.replace-words();
+        }
+    }
+
+    Rectangle {
+        x: 24px;
+        y: root.card-y;
+        width: 432px;
+        height: root.card-height;
+        background: Look.card;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Look.edge;
+        clip: true;
+
+        Text {
+            text: root.dice ? "Roll five dice for each word" : "Tap Generate to draw a passphrase";
+            color: Theme.palette-muted.with-alpha(PassphraseState.words.length == 0 ? 1.0 : 0.0);
+            animate color {
+                duration: 220ms;
+                easing: ease-in-out;
+            }
+            width: parent.width - 2 * Theme.spacing-xl;
+            font-family: Theme.font-primary;
+            font-size: Theme.font-size-body;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+
+        // top-aligned, so a word that is already there never moves when the next one arrives
+        VerticalLayout {
+            padding-top: 18px;
+            padding-bottom: 6px;
+            alignment: start;
+            spacing: 0px;
+
+            for word[index] in PassphraseState.words: WordRow {
+                number: index + 1;
+                text: word.text;
+                frames: word.frames;
+                revealed: PassphraseState.revealed;
+                leaving: root.leaving;
+                row-height: root.dice ? 30px : 34px;
+            }
+        }
+    }
+
+    // entropy: a number that counts up, a gauge, and the "show words" switch
+    Rectangle {
+        x: 24px;
+        y: root.card-y + root.card-height + 12px;
+        width: 432px;
+        height: 44px;
+
+        HorizontalLayout {
+            alignment: start;
+            spacing: Theme.spacing-sm;
+
+            Text {
+                text: Math.round(root.shown-bits * 10) / 10;
+                color: Look.teal.with-alpha(PassphraseState.bits > 0 ? 1.0 : 0.0);
+                animate color {
+                    duration: 220ms;
+                    easing: ease-in-out;
+                }
+                font-family: Theme.font-primary;
+                font-size: 34px;
+                font-weight: Theme.font-weight-bold;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: "bits";
+                color: Theme.palette-muted.with-alpha(PassphraseState.bits > 0 ? 1.0 : 0.0);
+                animate color {
+                    duration: 220ms;
+                    easing: ease-in-out;
+                }
+                font-family: Theme.font-primary;
+                font-size: Theme.font-size-subtitle;
+                vertical-alignment: center;
+            }
+        }
+
+        Switch {
+            x: parent.width - self.width;
+            y: (parent.height - self.height) / 2;
+            label: "Show words";
+            checked <=> PassphraseState.revealed;
+            changed(on) => {
+                root.touched();
+                PassphraseState.reveal-changed(on);
+            }
+        }
+    }
+
+    Rectangle {
+        x: 24px;
+        y: root.card-y + root.card-height + 62px;
+        width: 432px;
+        height: 4px;
+        border-radius: 2px;
+        background: Look.edge;
+
+        Rectangle {
+            x: 0px;
+            width: parent.width * Math.min(1.0, Math.max(0.0, root.shown-bits / 128.0));
+            height: parent.height;
+            border-radius: 2px;
+            background: @linear-gradient(90deg, Look.teal 0%, Look.copper 100%);
+        }
+    }
+
+    Text {
+        x: 24px;
+        y: root.card-y + root.card-height + 74px;
+        width: 432px;
+        height: 20px;
+        text: PassphraseState.status;
+        color: Theme.palette-muted;
+        font-family: Theme.font-primary;
+        font-size: Theme.font-size-label;
+        horizontal-alignment: center;
+    }
+
+    // device RNG: one big button
+    Button {
+        x: 24px;
+        y: 712px;
+        width: 432px;
+        height: 64px;
+        opacity: !root.dice ? 1.0 : 0.0;
+        visible: self.opacity > 0.01;
+        animate opacity {
+            duration: 220ms;
+            easing: ease-in-out;
+        }
+        text: PassphraseState.words.length == 0 ? "Generate" : "Generate new";
+        size: ControlSize.lg;
+        full-width: true;
+        clicked => {
+            root.touched();
+            if PassphraseState.words.length > 0 {
+                root.leaving = true;
+                root.generate-pending = true;
+            } else {
+                PassphraseState.generate();
+            }
+        }
+    }
+
+    // my dice: the five slots, the keys 1-6 and undo
+    Rectangle {
+        opacity: root.dice && !PassphraseState.finished ? 1.0 : 0.0;
+        visible: self.opacity > 0.01;
+        animate opacity {
+            duration: 220ms;
+            easing: ease-in-out;
+        }
+
+        HorizontalLayout {
+            x: 100px;
+            y: 552px;
+            width: 280px;
+            height: 48px;
+            spacing: 10px;
+
+            for digit[index] in PassphraseState.slots: Slot {
+                digit: digit;
+            }
+        }
+
+        for pip in [1, 2, 3, 4, 5, 6]: Button {
+            x: 24px + Math.mod(pip - 1, 3) * 147px;
+            y: pip <= 3 ? 608px : 672px;
+            width: 138px;
+            height: 56px;
+            text: pip;
+            variant: ButtonVariant.secondary;
+            size: ControlSize.md;
+            full-width: true;
+            clicked => {
+                root.touched();
+                PassphraseState.die(pip);
+            }
+        }
+
+        Button {
+            x: 24px;
+            y: 736px;
+            width: 432px;
+            height: 40px;
+            text: "Undo";
+            variant: ButtonVariant.ghost;
+            size: ControlSize.sm;
+            full-width: true;
+            clicked => {
+                root.touched();
+                PassphraseState.undo();
+            }
+        }
+    }
+
+    Button {
+        x: 24px;
+        y: 712px;
+        width: 432px;
+        height: 64px;
+        opacity: root.dice && PassphraseState.finished ? 1.0 : 0.0;
+        visible: self.opacity > 0.01;
+        animate opacity {
+            duration: 220ms;
+            easing: ease-in-out;
+        }
+        text: "Start over";
+        size: ControlSize.lg;
+        full-width: true;
+        clicked => {
+            root.touched();
+            root.leaving = true;
+            root.reset-pending = true;
+        }
+    }
+}

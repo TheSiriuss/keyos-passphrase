@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// One word of the passphrase: its text, and the blocky pre-made frames of its "pixel-in" effect
+// (coarsest first). Rust makes the frames, because Slint cannot pixelate text.
+export struct Word {
+    text: string,
+    frames: [image],
+}
+
+// The UI's whole interface to the Rust side. Rust owns every value here and
+// the UI only reads them; the UI calls the callbacks.
+export global PassphraseState {
+    // The words shown, one per row. Rows are added and removed one at a time, so only a new word plays
+    // its effect; the words already there are left alone.
+    in-out property <[Word]> words: [];
+    // Entropy of the words shown, in bits (0 when there are none).
+    in-out property <float> bits: 0.0;
+    // One line of guidance or an error ("Roll five dice for word 2 of 6").
+    in-out property <string> status: "";
+
+    // 0 = the device's hardware RNG, 1 = my own dice.
+    in-out property <int> mode: 0;
+    // Index into the word counts [4, 5, 6, 8].
+    in-out property <int> count-index: 2;
+    // Whether the words are shown or covered by dots.
+    in-out property <bool> revealed: true;
+
+    // Dice mode: the five slots of the word being rolled, and whether every word is done.
+    in-out property <[string]> slots: ["", "", "", "", ""];
+    in-out property <bool> finished: false;
+
+    callback generate();
+    callback die(int);
+    callback undo();
+    // Clear everything (used after a mode or word-count change, by "Start over", and by the idle timeout).
+    callback restart();
+    // "Show words" was switched. While it is off Rust gives the UI no copy of the words.
+    callback reveal-changed(bool);
+}
