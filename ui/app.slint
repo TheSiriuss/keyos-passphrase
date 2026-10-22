@@ -9,6 +9,7 @@ import {
 } from "@ui/theme.slint";
 import { PassphraseState, Word } from "callbacks.slint";
 import { Button } from "@ui/button.slint";
+import { Dialog, DialogVariant } from "@ui/dialog.slint";
 import { SegmentedControl } from "@ui/segmented_control.slint";
 import { Switch } from "@ui/switch.slint";
 
@@ -208,6 +209,16 @@ export component AppWindow inherits Window {
     // seconds since the last touch; counted only while there is a passphrase on the screen
     property <int> idle-seconds: 0;
 
+    // A tap that would wipe the passphrase on the screen waits for "Replace" first.
+    // 0 = nothing waiting, 1 = Generate new, 2 = Start over, 3 = other mode, 4 = other word count.
+    property <int> confirm: 0;
+    // The mode and word count the user has accepted. The segmented controls change their own value the
+    // moment they are tapped, so a refused change is put back to these.
+    property <int> kept-mode: 0;
+    property <int> kept-count: 2;
+    // What a waiting mode or word-count change would switch to.
+    property <int> wanted: 0;
+
     function touched() {
         root.idle-seconds = 0;
     }
@@ -218,6 +229,59 @@ export component AppWindow inherits Window {
         root.reset-pending = true;
     }
 
+    function ask(kind: int) {
+        root.touched();
+        root.confirm = kind;
+    }
+
+    // "Replace" was tapped: do what was waiting.
+    function confirmed() {
+        root.touched();
+        if root.confirm == 1 {
+            root.leaving = true;
+            root.generate-pending = true;
+        } else if root.confirm == 2 {
+            root.leaving = true;
+            root.reset-pending = true;
+        } else if root.confirm == 3 {
+            PassphraseState.mode = root.wanted;
+            root.kept-mode = root.wanted;
+            root.replace-words();
+        } else if root.confirm == 4 {
+            PassphraseState.count-index = root.wanted;
+            root.kept-count = root.wanted;
+            root.replace-words();
+        }
+        root.confirm = 0;
+    }
+
+    // Cover the words, and drop a question that was waiting. The idle timeout calls it, and Rust does when the
+    // system hides the app.
+    public function hide-words() {
+        root.confirm = 0;
+        PassphraseState.revealed = false;
+        PassphraseState.reveal-changed(false);
+    }
+
+    // Wipe everything and go back to the empty screen.
+    function wipe() {
+        root.confirm = 0;
+        PassphraseState.restart();
+        PassphraseState.revealed = true;
+        PassphraseState.reveal-changed(true);
+        root.idle-seconds = 0;
+    }
+
+    // Rust calls this when the app is shown again after being hidden for `away` seconds. Timers do not run
+    // while the app is hidden (the platform's event loop blocks until it is shown again), so that time is
+    // counted here, and the wipe that should have happened meanwhile happens now, before anything is shown.
+    public function came-back(away: int) {
+        root.idle-seconds += away;
+        if PassphraseState.words.length > 0 && root.idle-seconds >= Policy.wipe-after {
+            root.wipe();
+        }
+    }
+
     // Cover the words after Policy.hide-after seconds, wipe everything after Policy.wipe-after.
     // It runs (once a second) only while there are words; the rest of the time the app sleeps.
     idle-timer := Timer {
@@ -226,14 +290,10 @@ export component AppWindow inherits Window {
         triggered => {
             root.idle-seconds += 1;
             if root.idle-seconds == Policy.hide-after && PassphraseState.revealed {
-                PassphraseState.revealed = false;
-                PassphraseState.reveal-changed(false);
+                root.hide-words();
             }
             if root.idle-seconds >= Policy.wipe-after {
-                PassphraseState.restart();
-                PassphraseState.revealed = true;
-                PassphraseState.reveal-changed(true);
-                root.idle-seconds = 0;
+                root.wipe();
             }
         }
     }
@@ -272,7 +332,14 @@ export component AppWindow inherits Window {
         options: ["Device RNG", "My dice"];
         selected-index <=> PassphraseState.mode;
         changed(index, label) => {
-            root.replace-words();
+            if PassphraseState.words.length > 0 {
+                root.wanted = index;
+                PassphraseState.mode = root.kept-mode;
+                root.ask(3);
+            } else {
+                root.kept-mode = index;
+                root.replace-words();
+            }
         }
     }
 
@@ -285,7 +352,14 @@ export component AppWindow inherits Window {
         options: ["4 words", "5 words", "6 words", "8 words"];
         selected-index <=> PassphraseState.count-index;
         changed(index, label) => {
-            root.replace-words();
+            if PassphraseState.words.length > 0 {
+                root.wanted = index;
+                PassphraseState.count-index = root.kept-count;
+                root.ask(4);
+            } else {
+                root.kept-count = index;
+                root.replace-words();
+            }
         }
     }
 
@@ -300,19 +374,38 @@ export component AppWindow inherits Window {
         border-color: Look.edge;
         clip: true;
 
-        Text {
-            text: root.dice ? "Roll five dice for each word" : "Tap Generate to draw a passphrase";
-            color: Theme.palette-muted.with-alpha(PassphraseState.words.length == 0 ? 1.0 : 0.0);
-            animate color {
-                duration: 220ms;
-                easing: ease-in-out;
+        // What to do, and, before the first word exists, what will happen to the words if the screen is left alone
+        VerticalLayout {
+            alignment: center;
+            spacing: Theme.spacing-lg;
+            padding-left: Theme.spacing-xl;
+            padding-right: Theme.spacing-xl;
+
+            Text {
+                text: root.dice ? "Roll five dice for each word" : "Tap Generate to draw a passphrase";
+                color: Theme.palette-muted.with-alpha(PassphraseState.words.length == 0 ? 1.0 : 0.0);
+                animate color {
+                    duration: 220ms;
+                    easing: ease-in-out;
+                }
+                font-family: Theme.font-primary;
+                font-size: Theme.font-size-body;
+                horizontal-alignment: center;
+                wrap: word-wrap;
             }
-            width: parent.width - 2 * Theme.spacing-xl;
-            font-family: Theme.font-primary;
-            font-size: Theme.font-size-body;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            wrap: word-wrap;
+
+            Text {
+                text: "With no touch, the words are covered after " + Policy.hide-after + " s and wiped after " + Policy.wipe-after + " s.";
+                color: Theme.palette-muted.with-alpha(PassphraseState.words.length == 0 ? 1.0 : 0.0);
+                animate color {
+                    duration: 220ms;
+                    easing: ease-in-out;
+                }
+                font-family: Theme.font-primary;
+                font-size: Theme.font-size-label;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
         }
 
         // top-aligned, so a word that is already there never moves when the next one arrives
@@ -429,8 +522,7 @@ export component AppWindow inherits Window {
         clicked => {
             root.touched();
             if PassphraseState.words.length > 0 {
-                root.leaving = true;
-                root.generate-pending = true;
+                root.ask(1);
             } else {
                 PassphraseState.generate();
             }
@@ -504,9 +596,83 @@ export component AppWindow inherits Window {
         size: ControlSize.lg;
         full-width: true;
         clicked => {
+            root.ask(2);
+        }
+    }
+
+    // What the passphrase's bits stand for: the figure is only as good as the dice, or the RNG, behind it.
+    Text {
+        x: 24px;
+        y: root.card-y + root.card-height + 100px;
+        width: 432px;
+        height: 18px;
+        text: root.dice ? "Assumes fair dice and independent rolls." : "Assumes the device RNG is unbiased.";
+        color: Theme.palette-muted.with-alpha(PassphraseState.bits > 0 ? 1.0 : 0.0);
+        animate color {
+            duration: 220ms;
+            easing: ease-in-out;
+        }
+        font-family: Theme.font-primary;
+        font-size: Theme.font-size-label;
+        horizontal-alignment: center;
+    }
+
+    // Drawn last, so it covers everything and takes every touch while it is open.
+    Dialog {
+        width: parent.width;
+        height: parent.height;
+        open: root.confirm != 0;
+        variant: DialogVariant.danger;
+        dismissable: true;
+        dismissed => {
             root.touched();
-            root.leaving = true;
-            root.reset-pending = true;
+            root.confirm = 0;
+        }
+
+        Text {
+            text: root.confirm == 2 ? "Start over?" : "Replace this passphrase?";
+            color: Theme.palette-foreground;
+            font-family: Theme.font-primary;
+            font-size: Theme.font-size-title;
+            font-weight: Theme.font-weight-bold;
+            wrap: word-wrap;
+        }
+
+        Text {
+            text: (root.confirm == 1 ? "A new one will be drawn, and the words on the screen wiped."
+                : root.confirm == 2 ? "The words on the screen will be wiped."
+                : root.confirm == 3 ? "Changing the mode wipes the words on the screen."
+                : "Changing the number of words wipes the words on the screen.")
+                + " They are saved nowhere, so they cannot be brought back.";
+            color: Theme.palette-muted;
+            font-family: Theme.font-primary;
+            font-size: Theme.font-size-body;
+            wrap: word-wrap;
+        }
+
+        HorizontalLayout {
+            spacing: Theme.spacing-md;
+
+            Button {
+                text: "Keep";
+                variant: ButtonVariant.secondary;
+                size: ControlSize.md;
+                full-width: true;
+                clicked => {
+                    root.touched();
+                    root.confirm = 0;
+                }
+            }
+
+            Button {
+                text: root.confirm == 2 ? "Start over" : "Replace";
+                variant: ButtonVariant.danger;
+                size: ControlSize.md;
+                full-width: true;
+                clicked => {
+                    root.confirmed();
+                }
+            }
         }
     }
 }

@@ -13,10 +13,15 @@ mod theme;
 mod wipe;
 
 use slint_keyos_platform::app_ui2;
+use slint_keyos_platform::gui_server_api::InputMessage;
 use slint_keyos_platform::slint::{
     ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel, Weak,
 };
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Instant,
+};
 
 app_ui2!("Passphrase");
 
@@ -112,6 +117,8 @@ struct Ctx {
     ui: Weak<AppWindow>,
     session: RefCell<Session>,
     rows: Rc<VecModel<Word>>,
+    /// When the system hid the app, while it is hidden.
+    hidden_at: Cell<Option<Instant>>,
 }
 
 impl Ctx {
@@ -209,6 +216,26 @@ impl Ctx {
         self.render(false);
     }
 
+    /// The system hid the app (another app or the launcher took the foreground; a locking screen is expected to
+    /// do the same). Cover the words at once, so that the UI keeps no copy of them while nobody is looking, and
+    /// note the time. They stay covered when the app comes back; "Show words" hands them over again.
+    fn hidden(&self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        if self.hidden_at.get().is_none() {
+            self.hidden_at.set(Some(Instant::now()));
+        }
+        ui.invoke_hide_words();
+    }
+
+    /// The app is shown again. The platform runs no timers while it is hidden, so the idle timeout could not
+    /// count that time; the UI is told how long it was, and wipes if the passphrase has been left that long.
+    fn shown_again(&self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        if let Some(since) = self.hidden_at.take() {
+            ui.invoke_came_back(since.elapsed().as_secs().min(i32::MAX as u64) as i32);
+        }
+    }
+
     /// "Show words" was switched, by the user or by the idle timeout. While it is off, the UI holds no
     /// copy of the words; switching it on hands them over again.
     fn set_shown(&self, on: bool) {
@@ -222,7 +249,7 @@ impl Ctx {
     }
 }
 
-fn app_main(_cx: AppContext, ui: AppWindow) {
+fn app_main(cx: AppContext, ui: AppWindow) {
     log_server::init_wait(env!("CARGO_CRATE_NAME")).unwrap();
     log::set_max_level(log::LevelFilter::Info);
 
@@ -232,7 +259,12 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
     let state = ui.global::<PassphraseState>();
     state.set_words(ModelRc::from(rows.clone()));
 
-    let ctx = Rc::new(Ctx { ui: ui.as_weak(), session: RefCell::new(Session::default()), rows });
+    let ctx = Rc::new(Ctx {
+        ui: ui.as_weak(),
+        session: RefCell::new(Session::default()),
+        rows,
+        hidden_at: Cell::new(None),
+    });
     ctx.render(false);
 
     state.on_generate({
@@ -254,6 +286,14 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
     state.on_reveal_changed({
         let ctx = ctx.clone();
         move |on| ctx.set_shown(on)
+    });
+    cx.set_input_handler({
+        let ctx = ctx.clone();
+        move |input| match input.msg {
+            InputMessage::Hidden => ctx.hidden(),
+            InputMessage::Visible => ctx.shown_again(),
+            _ => {}
+        }
     });
 
     ui.run().expect("UI running");

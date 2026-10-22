@@ -7,9 +7,9 @@ logs the words, and wipes what it keeps of them.
 [![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 ![Status: simulator only](https://img.shields.io/badge/status-simulator%20only-orange.svg)
 
-| Device RNG, 8 words | My dice | Done |
-|---|---|---|
-| ![](screenshots/device-rng.png) | ![](screenshots/my-dice.png) | ![](screenshots/my-dice-done.png) |
+| Device RNG, 8 words | My dice | Done | Asks before wiping |
+|---|---|---|---|
+| ![](screenshots/device-rng.png) | ![](screenshots/my-dice.png) | ![](screenshots/my-dice-done.png) | ![](screenshots/asks-first.png) |
 
 **[Watch the 60 fps demo](demo/animations.mp4)** (recorded from the simulator; 83 s, it ends with the words
 covering themselves after 30 s without a touch).
@@ -30,13 +30,26 @@ the wallet or any other app, and nothing it shows is sent anywhere. You read the
   routes to the device's hardware random number generator (TRNG). Each index is taken from a random 32-bit value;
   values from the incomplete last block of the 32-bit range are rejected, so every word is exactly equally likely.
 - **My dice.** Roll five real dice per word and tap the results. `11111` is the first word of the list
-  (`abacus`), `66666` the last (`zoom`), exactly as on the EFF page. This mode needs to trust no RNG at all.
-  Undo takes back a die, or the last finished word.
-- **Entropy.** The screen shows the bits of what you have so far, with a gauge.
+  (`abacus`), `66666` the last (`zoom`), exactly as on the EFF page. This mode does not use the device's RNG at
+  all, but it trusts your dice (see Entropy below). Undo takes back a die, or the last finished word.
+- **Entropy.** The screen shows the bits of what you have so far, with a gauge. The figure assumes that each
+  word is chosen uniformly and independently of the others: with dice, that the dice are fair and every roll is
+  independent (a worn or loaded die, or rolls that depend on each other, give fewer bits than shown); with the
+  device RNG, that the hardware generator is unbiased. The screen says so under the gauge.
 - **Show words.** Covers the words with dots. While they are covered the UI is not given the words at all.
+- **No accidental replacement.** Anything that would wipe the passphrase on the screen asks first: Generate new,
+  Start over, and switching the mode or the number of words. The dialog defaults to keeping it: tapping outside
+  it, or Keep, changes nothing.
 - **Idle protection.** After **30 s** without a touch the words cover themselves, after **120 s** everything is
   wiped and the screen goes back to its empty state. A touch is a tap on any control; both times are constants in
-  `ui/app.slint` (`Policy`).
+  `ui/app.slint` (`Policy`), and the empty screen states them before the first passphrase is drawn.
+- **Leaving the app.** When the system hides the app (in the simulator: the launcher or another app comes to the
+  front), the words are covered at once, a question that was waiting is dropped, and the words stay covered when
+  you come back. The platform runs no timers while an app is hidden (its event loop waits until the app is shown
+  again), so the idle timeout cannot count that time. The app measures it itself: on coming back it adds the
+  time away to the idle time, and if that reaches 120 s it wipes before anything is shown. What it cannot do is
+  wipe by itself *while* hidden: until you come back or the app is closed, the words stay in its memory, covered.
+  See Status for what has been tested.
 - **Pixel-in.** A new word appears as coarse blocks that sharpen step by step into the real text (11, 7, 4 and
   2 pixel cells); words leave the same way backwards. When one word is added (dice mode) only that word plays
   the effect.
@@ -68,6 +81,13 @@ Version 0.1.0 runs in the KeyOS **simulator** only. It builds for the device (`a
 the installer limit is 64 MiB) but is **not signed, and has never been run on a Passport Prime**. In particular
 the randomness it gets in the simulator comes from the simulator's own generator, not from hardware: do not use
 a passphrase made there for anything real.
+
+Leaving the app was tried in the simulator by sending it to the launcher and back: after a few seconds the words
+come back covered, and after more than 120 s the app comes back empty. **Not tested:** what the Prime's lock
+screen does. The SDK documents an input message `Hidden` ("the app is getting minimized and hidden in the
+background") and the app reacts to it, but I have not confirmed that locking the device sends it, and an app
+cannot see the lock state without a permission I have not looked into. Please treat locking as unverified until
+it has been tried on a device.
 
 ## Build and run
 
